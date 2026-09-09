@@ -93,7 +93,7 @@ class DentalRecordsProvider extends ChangeNotifier {
   Future<PatientRecord?> processDocumentImage(Uint8List bytes, {String? filePath}) async {
     _isProcessingOcr = true;
     _ocrProgress = 0.0;
-    _ocrStatusMessage = 'Initiating Optical Character Recognition...';
+    _ocrStatusMessage = 'Scanning document...';
     _activeImageBytes = bytes;
     _activeImagePath = filePath;
     _detectedDuplicates = [];

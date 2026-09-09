@@ -2,184 +2,357 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dental_record_ocr/services/clinical_parser.dart';
 
 void main() {
-  group('ClinicalParser & OCR Extraction Tests', () {
-    test('Correctly extracts 9 categories from handwritten dental prescription', () {
-      const sampleText = '''
-SmileCraft Dental Clinic
-123 Oral Health Ave, Dental City
-Patient Name: David Miller
-Age: 38    Gender: Male    Date: Sept 08 2026
-Doctor: Dr. Arthur Pendelton
-Qualification: MDS Endodontics    Reg #: DEN-88219
+  group('ClinicalParser - Cyrus Ortiz Prescription Tests', () {
+    const rawOcrText = '''
+Clinic: SmileCrest Dental Clinic
+Raleigh, NC 27601
+Doctor: [Not visible]
+Patient Name: Cyrus Ortiz
+Age: 42
+Gender: Male
+Date: 2055-10-08
+Phone: 222 555 7777
+Address: [Not visible]
 
-Chief Complaint: Severe throbbing pain in lower right molar tooth #46, aggravated by cold and chewing for 4 days.
-Medical History: Well-controlled hypertension on Amlodipine 5mg.
-Dental History: Previous silver amalgam filling on #36.
-Allergies: Penicillin allergy, non-smoker.
-Clinical Findings: Deep occlusal caries on tooth #46, tender to percussion.
-Treatment Plan: Endodontic Root Canal Therapy (RCT) on #46 followed by Zirconia Crown.
+Vitals: [Not recorded]
+Diagnostics: [Not recorded]
 
-Rx:
-1. Cefuroxime 500mg BD x 5 days
-2. Ibuprofen 400mg TDS
+Chief Complaint: Tooth abscess
+Medical History: [Not recorded]
+Dental History: [Not recorded]
+Allergies: [Not recorded]
+Habits: [Not recorded]
 
-Estimated Cost: \$650
-Advance Paid: \$200
-Balance: \$450
-''';
-
-      final record = ClinicalParser.parseTextToRecord(rawText: sampleText);
-
-      // 1. Patient Details
-      expect(record.patientName, equals('David Miller'));
-      expect(record.age, equals(38));
-      expect(record.gender, equals('Male'));
-
-      // 2. Doctor Details
-      expect(record.doctorName, equals('Dr. Arthur Pendelton'));
-      expect(record.clinicName, contains('SmileCraft'));
-      expect(record.registrationNumber, equals('DEN-88219'));
-
-      // 3. Chief Complaint
-      expect(record.chiefComplaint, contains('Severe throbbing pain in lower right molar tooth #46'));
-
-      // 4. Medical History
-      expect(record.medicalHistory.any((m) => m.toLowerCase().contains('hypertension')), isTrue);
-
-      // 5. Dental History
-      expect(record.dentalHistory.any((d) => d.toLowerCase().contains('amalgam')), isTrue);
-
-      // 6. Allergies / Habits
-      expect(record.allergies.any((a) => a.toLowerCase().contains('penicillin')), isTrue);
-      expect(record.habits.any((h) => h.toLowerCase().contains('non-smoker')), isTrue);
-
-      // 7. Treatment Plan
-      expect(record.treatmentPlan, contains('Root Canal'));
-
-      // 8. Procedures / Tooth Details
-      expect(record.toothProcedures.any((tp) => tp.toothNumber == '46'), isTrue);
-
-      // 9. Financial Details
-      expect(record.estimatedCost, equals(650.0));
-      expect(record.advancePaid, equals(200.0));
-      expect(record.balanceDue, equals(450.0));
-    });
-
-    test('Correctly extracts printed dental examination chart', () {
-      const sampleText = '''
-Apex Dental Specialties & Implantology
-DENTAL EXAMINATION & TREATMENT PLAN
-Doctor: Dr. Evelyn Reed, DDS (License #10943)
-Patient: Sophia Martinez    Age: 29    Gender: Female
-Date: 2026-09-07    Phone: (555) 342-9910
-
-Chief Complaint: Bleeding and inflamed gums around upper left canine (#23)
-Medical History: None reported, Diabetes Negative
-Dental History: Orthodontic braces completed 4 years ago
-Allergies / Habits: Latex allergy (significant), non-smoker
-
-Procedures / Tooth Details:
-Tooth #23 Subgingival scaling and curettage
-Tooth #14 Composite resin restoration
-
-Financial Summary:
-Total Cost: \$480.00
-Insurance Covered: \$200.00
-Patient Copay Paid: \$150.00
-Balance Due: \$130.00
-''';
-
-      final record = ClinicalParser.parseTextToRecord(rawText: sampleText);
-
-      expect(record.patientName, equals('Sophia Martinez'));
-      expect(record.age, equals(29));
-      expect(record.gender, equals('Female'));
-      expect(record.allergies.any((a) => a.toLowerCase().contains('latex')), isTrue);
-      expect(record.toothProcedures.any((tp) => tp.toothNumber == '23'), isTrue);
-      expect(record.toothProcedures.any((tp) => tp.toothNumber == '14'), isTrue);
-      expect(record.estimatedCost, equals(480.0));
-      expect(record.insuranceCovered, equals(200.0));
-      expect(record.advancePaid, equals(150.0));
-      expect(record.balanceDue, equals(130.0));
-    });
-
-    test('Handles edge cases and missing fields gracefully without crashing', () {
-      const minimalText = 'Random notes without patient header or structure.';
-      final record = ClinicalParser.parseTextToRecord(rawText: minimalText);
-
-      expect(record.id.isNotEmpty, isTrue);
-      expect(record.patientName.isNotEmpty, isTrue);
-      expect(record.toothProcedures.isNotEmpty, isTrue); // Fallback tooth procedure
-      expect(record.estimatedCost, greaterThanOrEqualTo(0.0));
-    });
-
-    test('Correctly extracts financial details with INR currency symbols (₹, Rs.)', () {
-      const inrText = '''
-Apollo White Dental
-Patient Name: Rajesh Sharma
-Doctor: Dr. Sunita Rao
-Total Cost: ₹15,500.00
-Insurance Covered: Rs. 5000.00
-Advance Paid: ₹3,000.00
-Balance Due: ₹7,500.00
-''';
-      final record = ClinicalParser.parseTextToRecord(rawText: inrText);
-
-      expect(record.patientName, equals('Rajesh Sharma'));
-      expect(record.estimatedCost, equals(15500.0));
-      expect(record.insuranceCovered, equals(5000.0));
-      expect(record.advancePaid, equals(3000.0));
-      expect(record.balanceDue, equals(7500.0));
-    });
-
-    test('Correctly parses Gemini Vision AI multimodal handwriting transcription format', () {
-      const geminiOutput = '''
-Clinic: Fortis Dental Care
-Doctor: Dr. Ananya Sen, MDS (Reg #D-9982)
-Patient Name: Priya Verma
-Age: 32
-Gender: Female
-Phone: +91 98765 43210
-Date: 2026-09-09
-
-Chief Complaint: Sharp pain in upper left premolar tooth #24 on chewing.
-Medical History: Type 2 Diabetes (HbA1c 6.8)
-Dental History: Routine scaling 6 months ago
-Allergies: Penicillin, Sulfa drugs
-Habits: None reported
-
-Clinical Findings: Distal cavity on #24 with pulpal involvement.
+Clinical Findings: Tooth abscess
 
 Treatment Plan / Procedures:
-Tooth #24 Root Canal Treatment & Ceramic Inlay - Cost: ₹5500
+[No specific dental procedures with tooth numbers are listed]
 
 Rx / Medications:
-1. Amoxicillin Clavulanate 625mg 1-0-1 x 5 days
-2. Ketorolac 10mg PRN
+1. Amoxicillin 500mg 1 tablet Every 8 hours x 7 days
+2. Ibuprofen 400mg 1 tablet Every 8 hours x 7 days
 
-Financial Summary:
-Total Cost: ₹5,500.00
-Advance Paid: ₹2,000.00
-Insurance Covered: ₹0.00
-Balance Due: ₹3,500.00
+Advice / Instructions: Take medication with food, avoid alcohol.
+Next Appointment: 2055-10-15
 
-Notes / Instructions: Avoid hard foods on left side until obturation.
+Financial Summary: [Not visible]
+
+Notes / Instructions: Prescription No.: DC-2055-00123
 ''';
 
-      final record = ClinicalParser.parseTextToRecord(rawText: geminiOutput);
+    test('parses Cyrus Ortiz record cleanly without placeholder leaks', () {
+      final record = ClinicalParser.parseTextToRecord(rawText: rawOcrText);
 
-      expect(record.patientName, equals('Priya Verma'));
-      expect(record.age, equals(32));
+      // Patient identity
+      expect(record.patientName, equals('Cyrus Ortiz'));
+      expect(record.age, equals(42));
+      expect(record.gender, equals('Male'));
+      expect(record.phone, equals('222 555 7777'));
+      expect(record.address, isNull); // [Not visible] cleaned to null
+      expect(record.clinicName, contains('SmileCrest Dental Clinic'));
+      expect(record.doctorName, equals('Attending Dental Surgeon'));
+      expect(record.registrationNumber, equals('DC-2055-00123'));
+
+      // Date
+      expect(record.recordDate.year, equals(2055));
+      expect(record.recordDate.month, equals(10));
+      expect(record.recordDate.day, equals(8));
+
+      // Vitals & Diagnostics must be null (not '[Not recorded]')
+      expect(record.vitals, isNull);
+      expect(record.diagnostics, isNull);
+
+      // Chief complaint & diagnosis
+      expect(record.chiefComplaint, equals('Tooth abscess'));
+      expect(record.clinicalDiagnosis, equals('Tooth abscess'));
+
+      // Allergies must be empty to avoid false warning badge
+      expect(record.allergies, isEmpty);
+      expect(record.medicalHistory, isEmpty);
+      expect(record.dentalHistory, isEmpty);
+      expect(record.habits, isEmpty); // "avoid alcohol" should not trigger alcohol habit
+
+      // Treatment Plan
+      expect(record.toothProcedures, isEmpty);
+      expect(record.treatmentPlan, isNot(contains('[No specific')));
+
+      // Prescriptions: exactly 2 drugs, no "Advice" or "Next"
+      expect(record.prescriptions.length, equals(2));
+      expect(record.prescriptions[0].medicineName, equals('Amoxicillin 500mg'));
+      expect(record.prescriptions[0].dosage, contains('TDS'));
+      expect(record.prescriptions[0].duration, equals('7 days'));
+
+      expect(record.prescriptions[1].medicineName, equals('Ibuprofen 400mg'));
+      expect(record.prescriptions[1].dosage, contains('TDS'));
+      expect(record.prescriptions[1].duration, equals('7 days'));
+
+      // Advice & Next visit
+      expect(record.advice, equals('Take medication with food, avoid alcohol.'));
+      expect(record.nextVisit, equals('2055-10-15'));
+
+      // Financials
+      expect(record.estimatedCost, equals(0.0));
+      expect(record.balanceDue, equals(0.0));
+    });
+  });
+
+  group('ClinicalParser - Kanika Practo Dental Bill Tests', () {
+    const rawBillText = '''
+Clinic: HSR DENTAL CLINIC & IMPLANT CENTRE
+Phone: 080-22580522, 099 80 445555
+Doctor: Dr. Deepak Daryani
+Patient Name: KANIKA
+Date: 12 Dec, 2024
+
+Treatment Plan / Procedures:
+Consultation - Cost: ₹500.00
+Scaling & Polishing - Cost: ₹2,500.00
+Laser bacterial decontamination - Cost: ₹2,500.00
+Laser assisted RCT - Cost: ₹7,000.00
+Fibre Optic Post Placement - Cost: ₹3,000.00
+Composite Crown Buildup - Cost: ₹2,500.00
+Intra Oral Scanning - Cost: ₹1,000.00
+crown fixation with resin cement - Cost: ₹900.00
+
+Financial Summary:
+Total Cost: ₹19,900.00
+Advance Paid: ₹19,900.00
+Balance Due: ₹0.00
+
+Notes / Instructions:
+Receipt Number: RCPT2324
+Invoice Number: INV2324
+Mode of Payment: Cash
+Generated On: 12 Dec 2024
+''';
+
+    test('correctly parses date 12 Dec 2024, all 8 treatments, and invoice ID', () {
+      final record = ClinicalParser.parseTextToRecord(rawText: rawBillText);
+
+      // Patient & Clinic Details
+      expect(record.patientName, equals('KANIKA'));
+      expect(record.clinicName, contains('HSR DENTAL CLINIC & IMPLANT CENTRE'));
+      expect(record.doctorName, equals('Dr. Deepak Daryani'));
+      expect(record.phone, contains('080-22580522'));
+
+      // Date parsing: MUST be Dec 12, 2024, NOT current date
+      expect(record.recordDate.year, equals(2024));
+      expect(record.recordDate.month, equals(12));
+      expect(record.recordDate.day, equals(12));
+
+      // Reference / Registration Number
+      expect(record.registrationNumber, equals('INV2324'));
+
+      // Consultation fee must be extracted separately into consultationFee, NOT in tooth procedures
+      expect(record.consultationFee, equals(500.0));
+
+      // Exactly 7 clinical dental procedures (without Consultation)
+      expect(record.toothProcedures.length, equals(7));
+
+      expect(record.toothProcedures[0].procedureName, equals('Scaling & Polishing'));
+      expect(record.toothProcedures[0].estimatedCost, equals(2500.0));
+
+      expect(record.toothProcedures[1].procedureName, equals('Laser bacterial decontamination'));
+      expect(record.toothProcedures[1].estimatedCost, equals(2500.0));
+
+      expect(record.toothProcedures[2].procedureName, equals('Laser assisted RCT'));
+      expect(record.toothProcedures[2].estimatedCost, equals(7000.0));
+
+      expect(record.toothProcedures[3].procedureName, equals('Fibre Optic Post Placement'));
+      expect(record.toothProcedures[3].estimatedCost, equals(3000.0));
+
+      expect(record.toothProcedures[4].procedureName, equals('Composite Crown Buildup'));
+      expect(record.toothProcedures[4].estimatedCost, equals(2500.0));
+
+      expect(record.toothProcedures[5].procedureName, equals('Intra Oral Scanning'));
+      expect(record.toothProcedures[5].estimatedCost, equals(1000.0));
+
+      expect(record.toothProcedures[6].procedureName, equals('Crown fixation with resin cement'));
+      expect(record.toothProcedures[6].estimatedCost, equals(900.0));
+
+      // Financials
+      expect(record.estimatedCost, equals(19900.0));
+      expect(record.advancePaid, equals(19900.0));
+      expect(record.balanceDue, equals(0.0));
+
+      // Advice should NOT contain receipt/invoice numbers
+      expect(record.advice, isNull);
+    });
+
+    test('correctly extracts actual rates and never confuses row numbers (1., 2.) with price', () {
+      const numberedBillText = '''
+Clinic: HSR DENTAL CLINIC & IMPLANT CENTRE
+Doctor: Dr. Deepak Daryani
+Patient Name: KANIKA
+Date: 12 Dec, 2024
+
+Treatment Plan / Procedures:
+1. Consultation - Cost: ₹500.00
+2. Scaling & Polishing - Cost: ₹2,500.00
+3. Laser bacterial decontamination - Cost: ₹2,500.00
+4. Laser assisted RCT - Cost: ₹7,000.00
+5. Fibre Optic Post Placement - Cost: ₹3,000.00
+6. Composite Crown Buildup - Cost: ₹2,500.00
+7. Intra Oral Scanning - Cost: ₹1,000.00
+8. crown fixation with resin cement - Cost: ₹900.00
+
+Financial Summary:
+Total Cost: ₹19,900.00
+Advance Paid: ₹19,900.00
+Balance Due: ₹0.00
+''';
+
+      final record = ClinicalParser.parseTextToRecord(rawText: numberedBillText);
+      expect(record.consultationFee, equals(500.0));
+      expect(record.toothProcedures.length, equals(7));
+      expect(record.toothProcedures[0].procedureName, equals('Scaling & Polishing'));
+      expect(record.toothProcedures[0].estimatedCost, equals(2500.0));
+      expect(record.toothProcedures[1].procedureName, equals('Laser bacterial decontamination'));
+      expect(record.toothProcedures[1].estimatedCost, equals(2500.0));
+      expect(record.toothProcedures[2].procedureName, equals('Laser assisted RCT'));
+      expect(record.toothProcedures[2].estimatedCost, equals(7000.0));
+      expect(record.toothProcedures[3].procedureName, equals('Fibre Optic Post Placement'));
+      expect(record.toothProcedures[3].estimatedCost, equals(3000.0));
+      expect(record.toothProcedures[4].procedureName, equals('Composite Crown Buildup'));
+      expect(record.toothProcedures[4].estimatedCost, equals(2500.0));
+      expect(record.toothProcedures[5].procedureName, equals('Intra Oral Scanning'));
+      expect(record.toothProcedures[5].estimatedCost, equals(1000.0));
+      expect(record.toothProcedures[6].procedureName, equals('Crown fixation with resin cement'));
+      expect(record.toothProcedures[6].estimatedCost, equals(900.0));
+    });
+  });
+
+  group('ClinicalParser - Arundhati Roychowdhury Handwritten Prescription Tests', () {
+    const rawPrescriptionText = '''
+Clinic: Dr. T. K. Pal's Dental Clinic & Implant Centre / Quadra Medical Services Pvt. Ltd., 262, B. B. Chatterjee Road, Kasba, Kolkata - 700 042
+Doctor: Prof. Dr. Tamal Kanti Pal, B.D.S. (C.U.), M.D.S. (Periodontics, L.U.) / Dr. Sreya Pal, B.D.S., M.D.S. (WBUHS), Consultant Conservative & Endodontist
+Patient Name: Arundhati Roychowdhury
+Age: 65
+Gender: Female
+Date: 20/08/2019
+Phone: None
+Address: None
+
+Vitals: None
+Diagnostics: IOPA advised for tooth 24 (Palmer: 4 in upper left quadrant)
+
+Chief Complaint: None
+Medical History: None
+Dental History: None
+Allergies: None
+Habits: None
+
+Clinical Findings:
+Tooth 24: Carious exposure (distal)
+
+Treatment Plan / Procedures: None
+
+Rx / Medications:
+1. Tab. Zostum-O - Total: 10 tablets - 1 tablet BD (twice daily) x 5 days (after food)
+2. Tab. Megaflexon - Total: 12 tablets - 1 tablet TDS (three times daily) x 4 days (after food)
+3. H/S (Hot saline) mouthwash
+
+Advice / Instructions:
+Take medications after food
+Frequent warm/hot saline mouth rinses
+
+Next Appointment: None
+Financial Summary: None
+''';
+
+    test('correctly parses tooth 24, all 3 medications, date 20/08/2019, and advice', () {
+      final record = ClinicalParser.parseTextToRecord(rawText: rawPrescriptionText);
+
+      // Patient identity
+      expect(record.patientName, equals('Arundhati Roychowdhury'));
+      expect(record.age, equals(65));
       expect(record.gender, equals('Female'));
-      expect(record.doctorName, contains('Dr. Ananya Sen'));
-      expect(record.chiefComplaint, contains('tooth #24'));
-      expect(record.allergies.any((a) => a.toLowerCase().contains('penicillin')), isTrue);
+
+      // Date: 20/08/2019 -> August 20, 2019
+      expect(record.recordDate.year, equals(2019));
+      expect(record.recordDate.month, equals(8));
+      expect(record.recordDate.day, equals(20));
+
+      // Clinic & Doctor
+      expect(record.clinicName, contains("Pal's Dental Clinic"));
+      expect(record.doctorName, contains('Pal'));
+
+      // Diagnostics & Chief complaint
+      expect(record.diagnostics, contains('IOPA advised for tooth 24'));
+      expect(record.clinicalDiagnosis, contains('Carious exposure (distal)'));
+
+      // Tooth 24 must be captured as a procedure / finding
       expect(record.toothProcedures.any((p) => p.toothNumber == '24'), isTrue);
-      expect(record.prescriptions.length, greaterThanOrEqualTo(1));
-      expect(record.estimatedCost, equals(5500.0));
-      expect(record.advancePaid, equals(2000.0));
-      expect(record.balanceDue, equals(3500.0));
+      final tooth24 = record.toothProcedures.firstWhere((p) => p.toothNumber == '24');
+      expect(tooth24.surface, equals('Distal'));
+      expect(tooth24.procedureName, contains('Carious Exposure'));
+
+      // All 3 medications must be parsed
+      expect(record.prescriptions.length, equals(3));
+
+      final zostum = record.prescriptions.firstWhere((r) => r.medicineName.contains('Zostum-O'));
+      expect(zostum.dosage, contains('BD'));
+      expect(zostum.duration, equals('5 days'));
+      expect(zostum.instructions, contains('After food'));
+
+      final megaflexon = record.prescriptions.firstWhere((r) => r.medicineName.contains('Megaflexon'));
+      expect(megaflexon.dosage, contains('TDS'));
+      expect(megaflexon.duration, equals('4 days'));
+      expect(megaflexon.instructions, contains('After food'));
+
+      final mouthwash = record.prescriptions.firstWhere((r) => r.medicineName.toLowerCase().contains('mouthwash'));
+      expect(mouthwash.instructions, contains('warm saline'));
+
+      // Advice
+      expect(record.advice, contains('Take medications after food'));
+
+      // Placeholders must be sanitized to null / empty
+      expect(record.phone, isNull);
+      expect(record.address, isNull);
+      expect(record.vitals, isNull);
+      expect(record.allergies, isEmpty);
+      expect(record.medicalHistory, isEmpty);
+    });
+
+    test('sanitizes "Specific tooth number not specified" and parses multi-tooth Palmer notation', () {
+      const rawText = '''
+Clinic: Satguru Dental Centre
+Doctor: Dr. Sanjay Chawla, BDS
+Patient Name: Harish
+Age: 55
+Gender: Male
+Vitals: Temp 95.9°F, SpO2 99%
+Chief Complaint: Tooth abscess (Specific tooth number not specified in the document)
+Diagnosis: Tooth abscess (Specific tooth number not specified in the document)
+Clinical Findings:
+Pocket _|4 5 IOPA taken
+
+Treatment Plan / Procedures:
+Tooth #24, #25: Periodontal Debridement & Deep Scaling - Status: Planned
+
+Rx / Medications:
+1. Tab. Dox-L-100 1 tablet BD x 3 days (After food)
+2. Tab. Acemiz-S 1 tablet BD x 3 days
+3. Rexidine M Forte Gel (Local application)
+
+Advice: Warm saline rinses
+''';
+
+      final record = ClinicalParser.parseTextToRecord(
+        rawText: rawText,
+        imagePath: 'test_path.jpg',
+        ocrConfidence: 0.98,
+      );
+
+      // Verify disclaimers are cleanly stripped
+      expect(record.chiefComplaint, equals('Tooth abscess'));
+      expect(record.clinicalDiagnosis, equals('Tooth abscess'));
+      expect(record.treatmentPlan, isNot(contains('not specified')));
+      expect(record.treatmentPlan, isNot(contains('Specific tooth')));
+
+      // Both Tooth #24 and #25 should be parsed
+      expect(record.toothProcedures.any((p) => p.toothNumber == '24'), isTrue);
+      expect(record.toothProcedures.any((p) => p.toothNumber == '25'), isTrue);
     });
   });
 }
-

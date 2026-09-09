@@ -48,11 +48,17 @@ class PatientRecord {
 
   // 9. Payment / Financial Details
   final double estimatedCost;
+  final double? consultationFee; // e.g. Doctor Consultation Fee ₹500.00
   final double insuranceCovered;
   final double advancePaid;
   final double balanceDue;
   final String? paymentMethod; // "Cash", "Credit Card", "Insurance"
   final List<PrescriptionItem> prescriptions;
+
+  final String? vitals; // e.g. "Temp: 95.9°F, SpO2: 99%" or "BP: 120/80"
+  final String? diagnostics; // e.g. "IOPA taken", "OPG taken"
+  final String? advice; // e.g. "Warm saline rinses, take with food, avoid alcohol"
+  final String? nextVisit; // e.g. "In 3 days" or "Oct 15, 2055"
 
   // OCR & Document Metadata
   final String? imagePath;
@@ -89,11 +95,16 @@ class PatientRecord {
     this.estimatedTimeline,
     List<ToothProcedure>? toothProcedures,
     this.estimatedCost = 0.0,
+    this.consultationFee,
     this.insuranceCovered = 0.0,
     this.advancePaid = 0.0,
     this.balanceDue = 0.0,
     this.paymentMethod,
     List<PrescriptionItem>? prescriptions,
+    this.vitals,
+    this.diagnostics,
+    this.advice,
+    this.nextVisit,
     this.imagePath,
     this.rawOcrText,
     this.ocrConfidence = 0.95,
@@ -136,11 +147,16 @@ class PatientRecord {
     String? estimatedTimeline,
     List<ToothProcedure>? toothProcedures,
     double? estimatedCost,
+    double? consultationFee,
     double? insuranceCovered,
     double? advancePaid,
     double? balanceDue,
     String? paymentMethod,
     List<PrescriptionItem>? prescriptions,
+    String? vitals,
+    String? diagnostics,
+    String? advice,
+    String? nextVisit,
     String? imagePath,
     String? rawOcrText,
     double? ocrConfidence,
@@ -175,11 +191,16 @@ class PatientRecord {
       estimatedTimeline: estimatedTimeline ?? this.estimatedTimeline,
       toothProcedures: toothProcedures ?? this.toothProcedures,
       estimatedCost: estimatedCost ?? this.estimatedCost,
+      consultationFee: consultationFee ?? this.consultationFee,
       insuranceCovered: insuranceCovered ?? this.insuranceCovered,
       advancePaid: advancePaid ?? this.advancePaid,
       balanceDue: balanceDue ?? this.balanceDue,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       prescriptions: prescriptions ?? this.prescriptions,
+      vitals: vitals ?? this.vitals,
+      diagnostics: diagnostics ?? this.diagnostics,
+      advice: advice ?? this.advice,
+      nextVisit: nextVisit ?? this.nextVisit,
       imagePath: imagePath ?? this.imagePath,
       rawOcrText: rawOcrText ?? this.rawOcrText,
       ocrConfidence: ocrConfidence ?? this.ocrConfidence,
@@ -217,11 +238,16 @@ class PatientRecord {
       'estimatedTimeline': estimatedTimeline,
       'toothProcedures': toothProcedures.map((e) => e.toMap()).toList(),
       'estimatedCost': estimatedCost,
+      'consultationFee': consultationFee,
       'insuranceCovered': insuranceCovered,
       'advancePaid': advancePaid,
       'balanceDue': balanceDue,
       'paymentMethod': paymentMethod,
       'prescriptions': prescriptions.map((e) => e.toMap()).toList(),
+      'vitals': vitals,
+      'diagnostics': diagnostics,
+      'advice': advice,
+      'nextVisit': nextVisit,
       'imagePath': imagePath,
       'rawOcrText': rawOcrText,
       'ocrConfidence': ocrConfidence,
@@ -264,6 +290,7 @@ class PatientRecord {
               .toList() ??
           [],
       estimatedCost: (map['estimatedCost'] as num?)?.toDouble() ?? 0.0,
+      consultationFee: (map['consultationFee'] as num?)?.toDouble(),
       insuranceCovered: (map['insuranceCovered'] as num?)?.toDouble() ?? 0.0,
       advancePaid: (map['advancePaid'] as num?)?.toDouble() ?? 0.0,
       balanceDue: (map['balanceDue'] as num?)?.toDouble() ?? 0.0,
@@ -272,6 +299,10 @@ class PatientRecord {
               ?.map((e) => PrescriptionItem.fromMap(Map<dynamic, dynamic>.from(e as Map)))
               .toList() ??
           [],
+      vitals: map['vitals'] as String?,
+      diagnostics: map['diagnostics'] as String?,
+      advice: map['advice'] as String?,
+      nextVisit: map['nextVisit'] as String?,
       imagePath: map['imagePath'] as String?,
       rawOcrText: map['rawOcrText'] as String?,
       ocrConfidence: (map['ocrConfidence'] as num?)?.toDouble() ?? 0.95,

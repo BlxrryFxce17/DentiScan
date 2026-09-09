@@ -10,15 +10,18 @@ import '../providers/dental_records_provider.dart';
 import '../widgets/category_card.dart';
 import '../widgets/odontogram_widget.dart';
 import 'patient_detail_screen.dart';
+import '../../core/utils/document_scanner_helper.dart';
 
 class ReviewEditScreen extends StatefulWidget {
   final PatientRecord initialRecord;
   final Uint8List? documentImageBytes;
+  final bool isRescanOverwrite;
 
   const ReviewEditScreen({
     super.key,
     required this.initialRecord,
     this.documentImageBytes,
+    this.isRescanOverwrite = false,
   });
 
   @override
@@ -49,6 +52,7 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
 
   // Controllers for Financials
   late TextEditingController _estimatedCostController;
+  late TextEditingController _consultationFeeController;
   late TextEditingController _insuranceController;
   late TextEditingController _advancePaidController;
   late TextEditingController _balanceDueController;
@@ -62,6 +66,22 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
   String? _selectedToothOnOdontogram;
   bool _showDocumentPreview = false;
   String _selectedPaymentMethod = 'UPI / QR (GPay, PhonePe)';
+
+  static String _cleanDisclaimer(String text) {
+    return text.replaceAll(
+      RegExp(r'\s*\((?:specific\s*)?tooth\s*(?:number\s*)?(?:not\s*specified|unspecified|unknown|not\s*mentioned)[^\)]*\)', caseSensitive: false),
+      '',
+    ).replaceAll(
+      RegExp(r'\s*\[(?:specific\s*)?tooth\s*(?:number\s*)?(?:not\s*specified|unspecified|unknown|not\s*mentioned)[^\]]*\]', caseSensitive: false),
+      '',
+    ).replaceAll(
+      RegExp(r'\s*\((?:not\s*specified\s*in\s*(?:the\s*)?document|unspecified|not\s*recorded|not\s*provided)\)', caseSensitive: false),
+      '',
+    ).replaceAll(
+      RegExp(r'\s*\[(?:not\s*specified\s*in\s*(?:the\s*)?document|unspecified|not\s*recorded|not\s*provided)\]', caseSensitive: false),
+      '',
+    ).replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+  }
 
   @override
   void initState() {
@@ -79,11 +99,12 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
     _qualificationController = TextEditingController(text: _record.doctorQualification ?? '');
     _regNumController = TextEditingController(text: _record.registrationNumber ?? '');
 
-    _chiefComplaintController = TextEditingController(text: _record.chiefComplaint);
-    _treatmentPlanController = TextEditingController(text: _record.treatmentPlan);
-    _diagnosisController = TextEditingController(text: _record.clinicalDiagnosis ?? '');
+    _chiefComplaintController = TextEditingController(text: _cleanDisclaimer(_record.chiefComplaint));
+    _treatmentPlanController = TextEditingController(text: _cleanDisclaimer(_record.treatmentPlan));
+    _diagnosisController = TextEditingController(text: _cleanDisclaimer(_record.clinicalDiagnosis ?? ''));
 
     _estimatedCostController = TextEditingController(text: _record.estimatedCost > 0 ? _record.estimatedCost.toStringAsFixed(2) : '');
+    _consultationFeeController = TextEditingController(text: _record.consultationFee != null && _record.consultationFee! > 0 ? _record.consultationFee!.toStringAsFixed(2) : '');
     _insuranceController = TextEditingController(text: _record.insuranceCovered > 0 ? _record.insuranceCovered.toStringAsFixed(2) : '');
     _advancePaidController = TextEditingController(text: _record.advancePaid > 0 ? _record.advancePaid.toStringAsFixed(2) : '');
     _balanceDueController = TextEditingController(text: _record.balanceDue > 0 ? _record.balanceDue.toStringAsFixed(2) : '');
@@ -106,6 +127,7 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
     _diagnosisController.dispose();
 
     _estimatedCostController.dispose();
+    _consultationFeeController.dispose();
     _insuranceController.dispose();
     _advancePaidController.dispose();
     _balanceDueController.dispose();
@@ -126,12 +148,14 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
   }
 
   void _syncTotalBillFromProcedures() {
-    final sum = _record.toothProcedures.fold<double>(
+    final consult = double.tryParse(_consultationFeeController.text) ?? 0.0;
+    final procSum = _record.toothProcedures.fold<double>(
       0.0,
       (total, p) => total + (p.estimatedCost ?? 0.0),
     );
-    if (sum > 0) {
-      _estimatedCostController.text = sum.toStringAsFixed(2);
+    final total = consult + procSum;
+    if (total > 0) {
+      _estimatedCostController.text = total.toStringAsFixed(2);
       _recalculateBalance();
     }
   }
@@ -833,6 +857,7 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
       treatmentPlan: _treatmentPlanController.text.trim(),
       clinicalDiagnosis: _diagnosisController.text.trim(),
       estimatedCost: double.tryParse(_estimatedCostController.text) ?? 0.0,
+      consultationFee: double.tryParse(_consultationFeeController.text),
       insuranceCovered: double.tryParse(_insuranceController.text) ?? 0.0,
       advancePaid: double.tryParse(_advancePaidController.text) ?? 0.0,
       balanceDue: double.tryParse(_balanceDueController.text) ?? 0.0,
@@ -844,9 +869,17 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Record successfully stored in Hive!'), backgroundColor: AppTheme.accentEmerald),
+        SnackBar(
+          content: Text(
+            widget.isRescanOverwrite
+                ? 'Visit record successfully updated and overwritten in Hive!'
+                : 'Record successfully stored in Hive!',
+          ),
+          backgroundColor: AppTheme.accentEmerald,
+        ),
       );
-      Navigator.pushReplacement(
+      Navigator.popUntil(context, (route) => route.isFirst);
+      Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => PatientDetailScreen(record: updated),
@@ -863,12 +896,21 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
     return Scaffold(
       backgroundColor: AppTheme.slate50,
       appBar: AppBar(
-        title: const Text('Verify Extracted Record'),
+        title: Text(widget.isRescanOverwrite ? 'Review & Overwrite Visit' : 'Verify Extracted Record'),
         actions: [
+          TextButton.icon(
+            icon: Icon(widget.isRescanOverwrite ? Icons.sync_rounded : Icons.document_scanner_rounded, color: AppTheme.primaryTeal, size: 18),
+            label: Text(widget.isRescanOverwrite ? 'Rescan Again' : 'Rescan', style: const TextStyle(color: AppTheme.primaryTeal, fontWeight: FontWeight.bold)),
+            onPressed: () => DocumentScannerHelper.openScannerModal(
+              context,
+              existingRecord: _record,
+              existingBytes: widget.documentImageBytes,
+            ),
+          ),
           if (widget.documentImageBytes != null)
             TextButton.icon(
-              icon: Icon(_showDocumentPreview ? Icons.visibility_off : Icons.image_outlined, color: AppTheme.primaryTeal),
-              label: Text(_showDocumentPreview ? 'Hide Scan' : 'View Scan', style: const TextStyle(color: AppTheme.primaryTeal, fontWeight: FontWeight.bold)),
+              icon: Icon(_showDocumentPreview ? Icons.visibility_off : Icons.image_outlined, color: AppTheme.slate600, size: 18),
+              label: Text(_showDocumentPreview ? 'Hide Scan' : 'View Scan', style: const TextStyle(color: AppTheme.slate700, fontWeight: FontWeight.bold)),
               onPressed: () => setState(() => _showDocumentPreview = !_showDocumentPreview),
             ),
           const SizedBox(width: 8),
@@ -876,6 +918,53 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
       ),
       body: Column(
         children: [
+          if (widget.isRescanOverwrite)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryTeal.withValues(alpha: 0.1),
+                border: const Border(
+                  bottom: BorderSide(color: AppTheme.primaryTeal, width: 1.5),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryTeal,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.sync_rounded, color: Colors.white, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Overwriting Visit for ${_record.patientName}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13.5,
+                            color: AppTheme.primaryTeal,
+                          ),
+                        ),
+                        const SizedBox(height: 1),
+                        const Text(
+                          'Saving will update this visit record directly in Hive without creating a duplicate.',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: AppTheme.slate600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Optional collapsible document image viewer for side-by-side verification
           if (_showDocumentPreview && widget.documentImageBytes != null)
             Container(
@@ -1535,6 +1624,25 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
                         ),
                         child: Column(
                           children: [
+                            if ((double.tryParse(_consultationFeeController.text) ?? 0.0) > 0) ...[
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Row(
+                                    children: [
+                                      Icon(Icons.medical_services_outlined, size: 13, color: AppTheme.primaryTeal),
+                                      SizedBox(width: 5),
+                                      Text('Doctor Consultation Fee:', style: TextStyle(fontSize: 12, color: AppTheme.primaryDark, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                  Text(
+                                    '₹${(double.tryParse(_consultationFeeController.text) ?? 0.0).toStringAsFixed(2)}',
+                                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: AppTheme.primaryTeal),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                            ],
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -1581,6 +1689,17 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
                           ],
                         ),
                       ),
+                      TextField(
+                        controller: _consultationFeeController,
+                        keyboardType: TextInputType.number,
+                        onChanged: (_) => _syncTotalBillFromProcedures(),
+                        decoration: const InputDecoration(
+                          labelText: 'Doctor Consultation Fee (₹)',
+                          hintText: 'e.g. 500.00',
+                          prefixIcon: Icon(Icons.medical_services_outlined, size: 18, color: AppTheme.primaryTeal),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
@@ -1806,9 +1925,10 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
         ],
       ),
       bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: Colors.white,
+          border: const Border(top: BorderSide(color: AppTheme.slate200, width: 1)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.05),
@@ -1817,16 +1937,51 @@ class _ReviewEditScreenState extends State<ReviewEditScreen> {
             ),
           ],
         ),
-        child: ElevatedButton.icon(
-          onPressed: _saveRecord,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryTeal,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: SafeArea(
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: OutlinedButton.icon(
+                  onPressed: () => DocumentScannerHelper.openScannerModal(
+                    context,
+                    existingRecord: _record,
+                    existingBytes: widget.documentImageBytes,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.slate700,
+                    side: const BorderSide(color: AppTheme.slate300, width: 1.5),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  icon: Icon(widget.isRescanOverwrite ? Icons.sync_rounded : Icons.document_scanner_rounded, color: AppTheme.primaryTeal, size: 19),
+                  label: const Text('Rescan', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: ElevatedButton.icon(
+                  onPressed: _saveRecord,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryTeal,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    elevation: 2,
+                  ),
+                  icon: Icon(
+                    widget.isRescanOverwrite ? Icons.published_with_changes_rounded : Icons.check_circle_rounded,
+                    size: 19,
+                  ),
+                  label: Text(
+                    widget.isRescanOverwrite ? 'Update & Overwrite Visit' : 'Save Record',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
           ),
-          icon: const Icon(Icons.check_circle_rounded),
-          label: const Text('Save Record to Hive', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         ),
       ),
     );

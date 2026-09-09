@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../models/patient_record.dart';
 import '../providers/dental_records_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/image_processor.dart';
@@ -12,12 +14,14 @@ class ScanUploadScreen extends StatefulWidget {
   final String? preselectedAssetPath;
   final Uint8List? customBytes;
   final String? customFileName;
+  final PatientRecord? existingRecord;
 
   const ScanUploadScreen({
     super.key,
     this.preselectedAssetPath,
     this.customBytes,
     this.customFileName,
+    this.existingRecord,
   });
 
   @override
@@ -30,6 +34,8 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
   bool _isLoadingImage = true;
   bool _contrastEnhanced = false;
   late AnimationController _scannerAnimController;
+  final TransformationController _transformationController = TransformationController();
+  TapDownDetails? _doubleTapDetails;
 
   @override
   void initState() {
@@ -43,8 +49,30 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
 
   @override
   void dispose() {
+    _transformationController.dispose();
     _scannerAnimController.dispose();
     super.dispose();
+  }
+
+  void _handleDoubleTapDown(TapDownDetails details) {
+    _doubleTapDetails = details;
+  }
+
+  void _handleDoubleTap() {
+    HapticFeedback.selectionClick();
+    if (_transformationController.value != Matrix4.identity()) {
+      _transformationController.value = Matrix4.identity();
+    } else {
+      final position = _doubleTapDetails?.localPosition ?? Offset.zero;
+      final x = -position.dx * 1.5;
+      final y = -position.dy * 1.5;
+      final zoomed = Matrix4.identity()
+        ..setEntry(0, 0, 2.5)
+        ..setEntry(1, 1, 2.5)
+        ..setEntry(0, 3, x)
+        ..setEntry(1, 3, y);
+      _transformationController.value = zoomed;
+    }
   }
 
   Future<void> _loadImage() async {
@@ -86,17 +114,104 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
   Future<void> _executeOcr() async {
     if (_imageBytes == null) return;
 
+    final isCustomImage = widget.preselectedAssetPath == null &&
+        (_sourceIdentifier == null ||
+            (!_sourceIdentifier!.contains('sample_') && !_sourceIdentifier!.contains('assets/samples/')));
+
+    if (kIsWeb && isCustomImage && !HiveStorageService.hasGeminiApiKey()) {
+      final shouldConfigure = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: const [
+              Icon(Icons.psychology_rounded, color: AppTheme.accentCyan, size: 28),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Gemini AI Key Needed',
+                  style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            'To transcribe custom uploaded documents and handwriting in the browser, Google Gemini Vision AI is used.\n\nPlease enter your free Gemini API key to proceed.',
+            style: TextStyle(color: AppTheme.slate300, fontSize: 13.5, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel', style: TextStyle(color: AppTheme.slate400)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryTeal,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Enter API Key'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldConfigure == true && mounted) {
+        await showDialog(
+          context: context,
+          builder: (_) => const AiSettingsDialog(),
+        );
+      }
+
+      if (!HiveStorageService.hasGeminiApiKey()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('A Gemini API key is required to scan custom documents on Web.'),
+              backgroundColor: Colors.amber,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    _scannerAnimController.reset();
+    _scannerAnimController.repeat(reverse: true);
+
     final provider = context.read<DentalRecordsProvider>();
     final parsed = await provider.processDocumentImage(_imageBytes!, filePath: _sourceIdentifier);
 
     if (parsed != null && mounted) {
+      final recordToReview = widget.existingRecord != null
+          ? parsed.copyWith(
+              id: widget.existingRecord!.id,
+              createdAt: widget.existingRecord!.createdAt,
+              patientName: (parsed.patientName.trim().isNotEmpty && parsed.patientName.toLowerCase() != 'unknown')
+                  ? parsed.patientName
+                  : widget.existingRecord!.patientName,
+            )
+          : parsed;
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (_) => ReviewEditScreen(
-            initialRecord: parsed,
+            initialRecord: recordToReview,
             documentImageBytes: _imageBytes,
+            isRescanOverwrite: widget.existingRecord != null,
           ),
+        ),
+      );
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(provider.ocrStatusMessage),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 5),
         ),
       );
     }
@@ -113,14 +228,16 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
         foregroundColor: Colors.white,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text(
-              'Document Preprocessing & OCR',
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
+              widget.existingRecord != null ? 'Rescan Visit' : 'Scan Document',
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
             ),
             Text(
-              'Align, enhance and neural-extract clinical data',
-              style: TextStyle(color: AppTheme.slate400, fontSize: 11),
+              widget.existingRecord != null
+                  ? 'Overwriting visit for ${widget.existingRecord!.patientName}'
+                  : 'Review image and extract clinical notes',
+              style: const TextStyle(color: AppTheme.slate400, fontSize: 11),
             ),
           ],
         ),
@@ -146,8 +263,8 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
             onPressed: _toggleContrast,
           ),
           IconButton(
-            tooltip: 'AI Engine Settings',
-            icon: const Icon(Icons.psychology_rounded, color: AppTheme.accentCyan),
+            tooltip: 'Scanner Settings',
+            icon: const Icon(Icons.tune_rounded, color: AppTheme.accentCyan),
             onPressed: () async {
               await showDialog(
                 context: context,
@@ -161,6 +278,61 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
       ),
       body: Stack(
         children: [
+          // Overwrite Visit Information Banner
+          if (widget.existingRecord != null)
+            Positioned(
+              top: 12,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F2B48).withValues(alpha: 0.94),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppTheme.accentCyan.withValues(alpha: 0.6), width: 1.2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppTheme.accentCyan.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.sync_rounded, color: AppTheme.accentCyan, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Rescanning Visit: ${widget.existingRecord!.patientName}',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'New photo or file will overwrite this visit\'s extracted notes in Hive.',
+                            style: TextStyle(color: AppTheme.slate300, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
           // Document Image Preview with Viewfinder
           Center(
             child: _isLoadingImage
@@ -169,16 +341,21 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                     ? Stack(
                         alignment: Alignment.center,
                         children: [
-                          InteractiveViewer(
-                            minScale: 0.8,
-                            maxScale: 4.0,
-                            child: Padding(
-                              padding: const EdgeInsets.all(24.0),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.memory(
-                                  _imageBytes!,
-                                  fit: BoxFit.contain,
+                          GestureDetector(
+                            onDoubleTapDown: _handleDoubleTapDown,
+                            onDoubleTap: _handleDoubleTap,
+                            child: InteractiveViewer(
+                              transformationController: _transformationController,
+                              minScale: 0.8,
+                              maxScale: 5.0,
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.memory(
+                                    _imageBytes!,
+                                    fit: BoxFit.contain,
+                                  ),
                                 ),
                               ),
                             ),
@@ -194,7 +371,33 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                             ),
                           ),
 
-                          // Laser Scan Line Animation during OCR
+                          // Mobile Gesture Hint Pill
+                          Positioned(
+                            bottom: 12,
+                            child: IgnorePointer(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.65),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.white24, width: 0.8),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(Icons.pinch_rounded, size: 14, color: Colors.white70),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'Double-tap or pinch to inspect handwriting',
+                                      style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w500),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+
+                          // Animated Scanner Laser Line during Scanning
                           if (provider.isProcessingOcr)
                             Positioned.fill(
                               child: IgnorePointer(
@@ -203,26 +406,47 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                                   builder: (context, child) {
                                     return Align(
                                       alignment: Alignment(0, (_scannerAnimController.value * 2) - 1),
-                                      child: Container(
-                                        height: 3,
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            colors: [
-                                              AppTheme.accentCyan.withValues(alpha: 0.0),
-                                              AppTheme.accentCyan,
-                                              Colors.white,
-                                              AppTheme.accentCyan,
-                                              AppTheme.accentCyan.withValues(alpha: 0.0),
-                                            ],
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: AppTheme.accentCyan.withValues(alpha: 0.6),
-                                              blurRadius: 10,
-                                              spreadRadius: 2,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          // Laser beam
+                                          Container(
+                                            height: 3,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                colors: [
+                                                  AppTheme.accentCyan.withValues(alpha: 0.0),
+                                                  AppTheme.accentCyan.withValues(alpha: 0.8),
+                                                  Colors.white,
+                                                  AppTheme.accentCyan.withValues(alpha: 0.8),
+                                                  AppTheme.accentCyan.withValues(alpha: 0.0),
+                                                ],
+                                                stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: AppTheme.accentCyan.withValues(alpha: 0.8),
+                                                  blurRadius: 12,
+                                                  spreadRadius: 2,
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
+                                          ),
+                                          // Subtle glow wash
+                                          Container(
+                                            height: 24,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topCenter,
+                                                end: Alignment.bottomCenter,
+                                                colors: [
+                                                  AppTheme.accentCyan.withValues(alpha: 0.18),
+                                                  AppTheme.accentCyan.withValues(alpha: 0.0),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     );
                                   },
@@ -237,83 +461,82 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                       ),
           ),
 
-          // OCR Processing Modal Overlay
+          // Clean, Non-Intrusive Bottom Scanning Pill
           if (provider.isProcessingOcr)
-            Container(
-              color: Colors.black.withValues(alpha: 0.80),
-              child: Center(
-                child: Container(
-                  width: 320,
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: AppTheme.slate800,
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: AppTheme.primaryTeal.withValues(alpha: 0.5)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.primaryTeal.withValues(alpha: 0.25),
-                        blurRadius: 24,
-                        spreadRadius: 2,
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 30,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A).withValues(alpha: 0.94),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppTheme.primaryTeal.withValues(alpha: 0.4)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      blurRadius: 20,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentCyan),
                       ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [AppTheme.primaryTeal, AppTheme.accentCyan],
-                          ),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTheme.primaryTeal.withValues(alpha: 0.4),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.psychology_rounded, size: 36, color: Colors.white),
-                      ),
-                      const SizedBox(height: 18),
-                      const Text(
-                        'Neural OCR Pipeline',
-                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        provider.ocrStatusMessage,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppTheme.slate300, fontSize: 13, height: 1.3),
-                      ),
-                      const SizedBox(height: 20),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(
-                          value: provider.ocrProgress > 0 ? provider.ocrProgress : null,
-                          backgroundColor: AppTheme.slate700,
-                          valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.accentCyan),
-                          minHeight: 8,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Extracting 9 Categories & INR',
-                            style: TextStyle(color: AppTheme.slate400, fontSize: 11),
+                            'Scanning Document...',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
+                          const SizedBox(height: 2),
                           Text(
-                            '${(provider.ocrProgress * 100).toInt()}%',
-                            style: const TextStyle(color: AppTheme.accentCyan, fontSize: 13, fontWeight: FontWeight.w800),
+                            provider.ocrStatusMessage.isNotEmpty
+                                ? provider.ocrStatusMessage
+                                : 'Reading text...',
+                            style: const TextStyle(
+                              color: AppTheme.slate400,
+                              fontSize: 11.5,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryTeal.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${(provider.ocrProgress * 100).toInt()}%',
+                        style: const TextStyle(
+                          color: AppTheme.accentCyan,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -344,12 +567,20 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                 children: [
                   Builder(builder: (context) {
                     final engineMode = HiveStorageService.getOcrEngineMode();
-                    final engineLabel = engineMode == 'mlkit'
-                        ? 'Google ML Kit (Offline)'
-                        : (engineMode == 'gemini' ? 'Gemini 1.5 Flash Vision' : 'Auto (Gemini + ML Kit Fallback)');
-                    final icon = engineMode == 'mlkit'
-                        ? Icons.phonelink_setup_rounded
-                        : (engineMode == 'gemini' ? Icons.cloud_done_rounded : Icons.auto_awesome_rounded);
+                    final engineLabel = switch (engineMode) {
+                      'consensus' => 'Double-Check Mode (High Accuracy)',
+                      'gemini' => 'Google Cloud Reader',
+                      'mistral' => 'Mistral Cloud Reader',
+                      'mlkit' => 'Offline Mode',
+                      _ => 'Smart Auto (Recommended)',
+                    };
+                    final icon = switch (engineMode) {
+                      'consensus' => Icons.fact_check_rounded,
+                      'gemini' => Icons.cloud_done_rounded,
+                      'mistral' => Icons.cloud_outlined,
+                      'mlkit' => Icons.wifi_off_rounded,
+                      _ => Icons.auto_awesome_rounded,
+                    };
 
                     return InkWell(
                       onTap: () async {
@@ -374,7 +605,7 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                             Icon(icon, size: 13, color: AppTheme.accentCyan),
                             const SizedBox(width: 6),
                             Text(
-                              'AI Engine: $engineLabel',
+                              'Reader: $engineLabel',
                               style: const TextStyle(fontSize: 11, color: AppTheme.accentCyan, fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(width: 6),
@@ -399,7 +630,7 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                             ),
                             const SizedBox(height: 2),
                             const Text(
-                              'Pinch to zoom • Ready for neural extraction',
+                              'Pinch to zoom or rotate',
                               style: TextStyle(color: AppTheme.slate400, fontSize: 11),
                             ),
                           ],
@@ -415,8 +646,11 @@ class _ScanUploadScreenState extends State<ScanUploadScreen> with SingleTickerPr
                           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         ),
-                        icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                        label: const Text('Extract & Structure', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                        icon: Icon(widget.existingRecord != null ? Icons.sync_rounded : Icons.document_scanner_rounded, size: 20),
+                        label: Text(
+                          widget.existingRecord != null ? 'Scan & Overwrite' : 'Scan Document',
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                        ),
                       ),
                     ],
                   ),

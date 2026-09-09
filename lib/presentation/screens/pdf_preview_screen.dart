@@ -17,23 +17,45 @@ class PdfPreviewScreen extends StatelessWidget {
     final fileName = 'Dental_Record_${record.patientName.replaceAll(RegExp(r'\s+'), '_')}_${record.id.substring(0, 6)}.pdf';
 
     return Scaffold(
-      backgroundColor: AppTheme.slate800,
+      backgroundColor: AppTheme.slate900,
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.slate900,
+        backgroundColor: AppTheme.slate900,
+        foregroundColor: Colors.white,
+        elevation: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${record.patientName} - Clinical PDF',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              '${record.patientName} — Clinical Report',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
             ),
-            const Text(
-              'Print, Share or Export Document',
-              style: TextStyle(fontSize: 11, color: AppTheme.slate400),
+            Text(
+              'Document ID: ${record.id.substring(0, 8).toUpperCase()}',
+              style: const TextStyle(fontSize: 11, color: AppTheme.slate400),
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Print Report',
+            icon: const Icon(Icons.print_rounded, color: AppTheme.accentCyan),
+            onPressed: () async {
+              await Printing.layoutPdf(
+                onLayout: (format) => PdfExporter.generateDentalReportPdf(record),
+                name: fileName,
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Download / Share PDF',
+            icon: const Icon(Icons.share_rounded, color: AppTheme.primaryTeal),
+            onPressed: () async {
+              final bytes = await PdfExporter.generateDentalReportPdf(record);
+              await Printing.sharePdf(bytes: bytes, filename: fileName);
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: PdfPreview(
         build: (format) => PdfExporter.generateDentalReportPdf(record),
@@ -41,6 +63,7 @@ class PdfPreviewScreen extends StatelessWidget {
         canChangeOrientation: false,
         canChangePageFormat: false,
         canDebug: false,
+        useActions: false,
         loadingWidget: const Center(
           child: CircularProgressIndicator(color: AppTheme.primaryTeal),
         ),

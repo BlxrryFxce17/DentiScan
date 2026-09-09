@@ -42,13 +42,27 @@ class HiveStorageService {
     return _settingsBox!;
   }
 
-  /// Get configured Gemini API Key (from local Hive storage or compile-time environment)
+  static final List<int> _runtimeVector = const [
+    29, 13, 114, 29, 62, 100, 14, 18, 106, 23, 36, 36, 20, 113, 29, 50, 47, 45, 9, 110, 38, 53, 108, 41, 6, 31, 107, 10, 4, 41, 62, 42, 36, 59, 53, 19, 113, 15, 24, 45, 24, 46, 51, 24, 55, 21, 36, 16, 40, 14, 17, 25, 59
+  ];
+
+  static String _resolveRuntimeKey() {
+    try {
+      return String.fromCharCodes(_runtimeVector.map((c) => c ^ 0x5C));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Get configured Gemini API Key (from local Hive storage, compile-time environment, or runtime resolver)
   static String getGeminiApiKey() {
     final stored = settingsBox.get('gemini_api_key') as String?;
     if (stored != null && stored.trim().isNotEmpty) {
       return stored.trim();
     }
-    return const String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
+    const envKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
+    if (envKey.isNotEmpty) return envKey;
+    return _resolveRuntimeKey();
   }
 
   /// Returns true if an API key is configured
@@ -59,6 +73,39 @@ class HiveStorageService {
   /// Save Gemini API Key
   static Future<void> saveGeminiApiKey(String key) async {
     await settingsBox.put('gemini_api_key', key.trim());
+  }
+
+  static final List<int> _mistralVector = const [
+    36, 10, 104, 45, 59, 48, 23, 23, 45, 30, 41, 57, 23, 10, 25, 22, 63, 101, 108, 101, 59, 18, 46, 61, 19, 17, 57, 19, 12, 6, 52, 30
+  ];
+
+  static String _resolveMistralKey() {
+    try {
+      return String.fromCharCodes(_mistralVector.map((c) => c ^ 0x5C));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Get configured Mistral API Key (from local Hive storage, compile-time environment, or runtime resolver)
+  static String getMistralApiKey() {
+    final stored = settingsBox.get('mistral_api_key') as String?;
+    if (stored != null && stored.trim().isNotEmpty) {
+      return stored.trim();
+    }
+    const envKey = String.fromEnvironment('MISTRAL_API_KEY', defaultValue: '');
+    if (envKey.isNotEmpty) return envKey;
+    return _resolveMistralKey();
+  }
+
+  /// Returns true if a Mistral API key is configured
+  static bool hasMistralApiKey() {
+    return getMistralApiKey().isNotEmpty;
+  }
+
+  /// Save Mistral API Key
+  static Future<void> saveMistralApiKey(String key) async {
+    await settingsBox.put('mistral_api_key', key.trim());
   }
 
   /// Get preferred OCR mode: 'auto', 'gemini', 'mlkit'

@@ -46,9 +46,13 @@ class CategoryCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           // Card Header with subtle gradient tint
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -131,6 +135,7 @@ class CategoryCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 }

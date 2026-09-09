@@ -4,6 +4,8 @@ import '../core/utils/image_processor.dart';
 import 'clinical_parser.dart';
 import 'ml_kit_ocr_service.dart';
 import 'gemini_vision_service.dart';
+import 'mistral_vision_service.dart';
+import 'clinical_consensus_engine.dart';
 import 'hive_storage_service.dart';
 
 class OcrProgressUpdate {
@@ -21,14 +23,15 @@ class OcrEngine {
     Function(OcrProgressUpdate)? onProgress,
   }) async {
     // Step 1: Document boundary analysis & deskew
-    onProgress?.call(OcrProgressUpdate(0.15, 'Analyzing image contrast & document orientation...'));
+    onProgress?.call(OcrProgressUpdate(0.15, 'Preparing image...'));
     await Future.delayed(const Duration(milliseconds: 200));
 
     final preprocessed = await ImageProcessor.preprocessDocument(imageBytes);
 
     // Step 2: Determine engine mode & execute OCR
-    final engineMode = HiveStorageService.getOcrEngineMode(); // 'auto', 'gemini', 'mlkit'
-    final apiKey = HiveStorageService.getGeminiApiKey();
+    final engineMode = HiveStorageService.getOcrEngineMode(); // 'auto', 'consensus', 'gemini', 'mistral', 'mlkit'
+    final geminiKey = HiveStorageService.getGeminiApiKey();
+    final mistralKey = HiveStorageService.getMistralApiKey();
 
     String extractedText = '';
     double confidence = 0.95;
@@ -36,29 +39,135 @@ class OcrEngine {
     // Check if this is a built-in pre-loaded sample image
     final sampleText = _checkSampleMatch(preprocessed.bytes, filePath);
     if (sampleText != null) {
-      onProgress?.call(OcrProgressUpdate(0.60, 'Recognized standard clinical evaluation benchmark chart...'));
+      onProgress?.call(OcrProgressUpdate(0.60, 'Loading sample...'));
       extractedText = sampleText;
     } else {
-      if ((engineMode == 'auto' || engineMode == 'gemini') && apiKey.isNotEmpty) {
+      String? lastFailureReason;
+
+      // 1. DUAL-AI DEBATE & CONSENSUS MODE (Runs Gemini & Mistral in Parallel)
+      if (engineMode == 'consensus' && (geminiKey.isNotEmpty || mistralKey.isNotEmpty)) {
+        onProgress?.call(OcrProgressUpdate(0.35, 'Debating document with Gemini & Mistral in parallel...'));
+
+        final futures = <Future<String?>>[];
+        if (geminiKey.isNotEmpty) {
+          futures.add(
+            GeminiVisionService.extractClinicalText(imageBytes: preprocessed.bytes, apiKey: geminiKey)
+                .then<String?>((t) => t)
+                .catchError((e) {
+              debugPrint('Consensus - Gemini error: $e');
+              return null;
+            }),
+          );
+        } else {
+          futures.add(Future.value(null));
+        }
+
+        if (mistralKey.isNotEmpty) {
+          futures.add(
+            MistralVisionService.extractClinicalText(imageBytes: preprocessed.bytes, apiKey: mistralKey)
+                .then<String?>((t) => t)
+                .catchError((e) {
+              debugPrint('Consensus - Mistral error: $e');
+              return null;
+            }),
+          );
+        } else {
+          futures.add(Future.value(null));
+        }
+
+        final results = await Future.wait(futures);
+        final geminiText = results[0];
+        final mistralText = results[1];
+
+        // If BOTH models succeeded, debate and reconcile them!
+        if (geminiText != null && geminiText.trim().isNotEmpty && mistralText != null && mistralText.trim().isNotEmpty) {
+          onProgress?.call(OcrProgressUpdate(0.70, 'Reconciling clinical debate & cross-verifying findings...'));
+          await Future.delayed(const Duration(milliseconds: 150));
+
+          final recGemini = ClinicalParser.parseTextToRecord(
+            rawText: geminiText,
+            imagePath: filePath,
+            ocrConfidence: 0.98,
+          );
+          final recMistral = ClinicalParser.parseTextToRecord(
+            rawText: mistralText,
+            imagePath: filePath,
+            ocrConfidence: 0.98,
+          );
+
+          final consensusReport = ClinicalConsensusEngine.reconcile(
+            geminiRecord: recGemini,
+            mistralRecord: recMistral,
+          );
+
+          onProgress?.call(OcrProgressUpdate(1.0, 'Opening verified consensus record...'));
+          return consensusReport.record;
+        } else if (geminiText != null && geminiText.trim().isNotEmpty) {
+          extractedText = geminiText;
+          confidence = 0.98;
+        } else if (mistralText != null && mistralText.trim().isNotEmpty) {
+          extractedText = mistralText;
+          confidence = 0.98;
+        } else {
+          lastFailureReason = 'Both Gemini and Mistral consensus requests failed.';
+        }
+      }
+
+      // 2. Direct Mistral mode
+      if (extractedText.trim().isEmpty && engineMode == 'mistral' && mistralKey.isNotEmpty) {
         try {
-          onProgress?.call(OcrProgressUpdate(0.40, 'Deciphering handwriting with Google Gemini Multimodal Vision AI...'));
-          extractedText = await GeminiVisionService.extractClinicalText(
+          onProgress?.call(OcrProgressUpdate(0.40, 'Processing with Mistral Pixtral...'));
+          extractedText = await MistralVisionService.extractClinicalText(
             imageBytes: preprocessed.bytes,
-            apiKey: apiKey,
+            apiKey: mistralKey,
           );
           confidence = 0.98;
-          onProgress?.call(OcrProgressUpdate(0.75, 'Gemini handwriting transcription complete!'));
-        } catch (geminiError) {
-          debugPrint('Gemini Vision error: $geminiError. Falling back to on-device Google ML Kit...');
-          onProgress?.call(OcrProgressUpdate(0.50, 'Cloud AI unavailable, falling back to on-device ML Kit OCR...'));
+          onProgress?.call(OcrProgressUpdate(0.75, 'Categorizing clinical data...'));
+        } catch (mistralError) {
+          debugPrint('Mistral Vision error: $mistralError');
+          lastFailureReason = mistralError.toString();
           extractedText = '';
         }
       }
 
-      // If Gemini wasn't used or failed, run Google ML Kit
-      if (extractedText.trim().isEmpty) {
+      // 3. Gemini mode or Auto mode (Gemini first)
+      if (extractedText.trim().isEmpty && (engineMode == 'auto' || engineMode == 'gemini') && geminiKey.isNotEmpty) {
         try {
-          onProgress?.call(OcrProgressUpdate(0.60, 'Scanning text lines with on-device Google ML Kit...'));
+          onProgress?.call(OcrProgressUpdate(0.40, 'Processing with Gemini Vision...'));
+          extractedText = await GeminiVisionService.extractClinicalText(
+            imageBytes: preprocessed.bytes,
+            apiKey: geminiKey,
+          );
+          confidence = 0.98;
+          onProgress?.call(OcrProgressUpdate(0.75, 'Categorizing clinical data...'));
+        } catch (geminiError) {
+          debugPrint('Gemini Vision error: $geminiError');
+          lastFailureReason = geminiError.toString();
+          extractedText = '';
+        }
+      }
+
+      // 4. Auto fallback to Mistral Pixtral if Gemini encountered an issue or rate limit
+      if (extractedText.trim().isEmpty && engineMode == 'auto' && mistralKey.isNotEmpty) {
+        try {
+          onProgress?.call(OcrProgressUpdate(0.55, 'Switching to Mistral Pixtral fallback...'));
+          extractedText = await MistralVisionService.extractClinicalText(
+            imageBytes: preprocessed.bytes,
+            apiKey: mistralKey,
+          );
+          confidence = 0.98;
+          onProgress?.call(OcrProgressUpdate(0.75, 'Categorizing clinical data...'));
+        } catch (mistralError) {
+          debugPrint('Mistral Fallback error: $mistralError');
+          lastFailureReason = 'Gemini: $lastFailureReason | Mistral: $mistralError';
+          extractedText = '';
+        }
+      }
+
+      // 5. On-device Google ML Kit (on mobile/desktop native platforms)
+      if (extractedText.trim().isEmpty && !kIsWeb) {
+        try {
+          onProgress?.call(OcrProgressUpdate(0.65, 'Reading text with on-device ML Kit...'));
           extractedText = await MlKitOcrService.extractText(
             imageBytes: preprocessed.bytes,
             filePath: filePath,
@@ -66,19 +175,32 @@ class OcrEngine {
           confidence = 0.92;
         } catch (mlKitError) {
           debugPrint('ML Kit OCR error: $mlKitError');
-          // Ultimate fallback if camera feed was corrupted or unreadable
-          extractedText = _sample1Text;
         }
       }
 
-      // If text is still completely blank (e.g., completely black photo)
+      // If text is still completely blank
       if (extractedText.trim().isEmpty) {
-        extractedText = _sample1Text;
+        if (kIsWeb && geminiKey.isEmpty && mistralKey.isEmpty) {
+          throw Exception(
+            'On Web, an API key is required to scan custom uploaded files. '
+            'Please tap the Settings icon to enter your Gemini or Mistral key.',
+          );
+        } else if (lastFailureReason != null) {
+          if (lastFailureReason.contains('503')) {
+            throw Exception('AI Cloud Service is temporarily experiencing high demand (HTTP 503). Please tap "Rescan" in a few moments.');
+          } else if (lastFailureReason.contains('429')) {
+            throw Exception('AI Cloud quota rate limit reached (HTTP 429). Please wait a moment or check your AI Settings.');
+          } else {
+            throw Exception('AI scanning failed: $lastFailureReason');
+          }
+        } else {
+          throw Exception('No readable text could be found. Please ensure the photo is clear and in focus.');
+        }
       }
     }
 
-    // Step 3: Clinical Semantic Categorization into 9 categories
-    onProgress?.call(OcrProgressUpdate(0.85, 'Categorizing into 9 dental clinical domains...'));
+    // Step 3: Clinical Semantic Categorization
+    onProgress?.call(OcrProgressUpdate(0.85, 'Reading details...'));
     await Future.delayed(const Duration(milliseconds: 200));
 
     final record = ClinicalParser.parseTextToRecord(
@@ -87,17 +209,18 @@ class OcrEngine {
       ocrConfidence: confidence,
     );
 
-    onProgress?.call(OcrProgressUpdate(1.0, 'Extraction complete! Ready for clinical verification.'));
+    onProgress?.call(OcrProgressUpdate(1.0, 'Opening record...'));
     return record;
   }
 
   static String? _checkSampleMatch(Uint8List bytes, String? path) {
-    final p = (path ?? '').toLowerCase();
-    if (p.contains('sample_1') || p.contains('handwritten') || p.contains('smilecraft') || (bytes.length > 920000 && bytes.length < 950000)) {
+    if (path == null) return null;
+    final p = path.toLowerCase();
+    if (p.contains('sample_1_handwritten_rx') || p.endsWith('sample_1.jpg')) {
       return _sample1Text;
-    } else if (p.contains('sample_2') || p.contains('printed') || p.contains('apex') || (bytes.length > 900000 && bytes.length < 920000)) {
+    } else if (p.contains('sample_2_printed_chart') || p.endsWith('sample_2.jpg')) {
       return _sample2Text;
-    } else if (p.contains('sample_3') || p.contains('skewed') || p.contains('chang') || (bytes.length > 700000 && bytes.length < 720000)) {
+    } else if (p.contains('sample_3_skewed_record') || p.endsWith('sample_3.jpg')) {
       return _sample3Text;
     }
     return null;

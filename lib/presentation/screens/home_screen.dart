@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,7 +12,9 @@ import '../widgets/sample_picker_sheet.dart';
 import 'scan_upload_screen.dart';
 import 'patient_detail_screen.dart';
 import 'pdf_preview_screen.dart';
+import 'review_edit_screen.dart';
 import '../widgets/ai_settings_dialog.dart';
+import '../../core/utils/document_scanner_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -264,107 +267,140 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // TAB 0: Clinical Visits View
   Widget _buildVisitsTab(DentalRecordsProvider provider, List<PatientRecord> records) {
-    return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
-      slivers: [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                _buildQuickActionBar(),
-                const SizedBox(height: 16),
-                _buildStatsRow(provider.records),
-                const SizedBox(height: 16),
-                _buildSearchBar(provider),
-              ],
-            ),
-          ),
-        ),
-
-        // Visits List Header
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 4,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryTeal,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'CLINICAL VISITS (${records.length})',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.8,
-                        color: AppTheme.slate600,
-                      ),
-                    ),
-                  ],
-                ),
-                if (provider.searchQuery.isNotEmpty)
-                  TextButton(
-                    onPressed: () {
-                      _searchController.clear();
-                      provider.setSearchQuery('');
-                    },
-                    child: const Text('Clear Filter', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.primaryTeal)),
-                  ),
-              ],
-            ),
-          ),
-        ),
-
-        // Visits List
-        if (records.isEmpty)
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: _buildEmptyState(provider),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final record = records[index];
-                  return _buildRecordCard(record);
-                },
-                childCount: records.length,
+    return RefreshIndicator(
+      color: AppTheme.primaryTeal,
+      backgroundColor: Colors.white,
+      onRefresh: () async {
+        HapticFeedback.lightImpact();
+        await provider.loadRecords();
+      },
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  _buildQuickActionBar(),
+                  const SizedBox(height: 16),
+                  _buildStatsRow(provider.records),
+                  const SizedBox(height: 16),
+                  _buildSearchBar(provider),
+                ],
               ),
             ),
           ),
-        const SliverToBoxAdapter(
-          child: SizedBox(height: 80),
-        ),
-      ],
+
+          // Visits List Header
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 4,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryTeal,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'CLINICAL VISITS (${records.length})',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                              color: AppTheme.slate600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (provider.searchQuery.isNotEmpty)
+                        TextButton(
+                          onPressed: () {
+                            _searchController.clear();
+                            provider.setSearchQuery('');
+                          },
+                          child: const Text('Clear Filter', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.primaryTeal)),
+                        ),
+                    ],
+                  ),
+                  if (records.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: const [
+                        Icon(Icons.swipe_rounded, size: 12, color: AppTheme.slate400),
+                        SizedBox(width: 4),
+                        Text(
+                          'Swipe right for PDF, left to delete • Long-press for shortcuts',
+                          style: TextStyle(fontSize: 10.5, color: AppTheme.slate400, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          // Visits List
+          if (records.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(provider),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final record = records[index];
+                    return _buildRecordCard(record);
+                  },
+                  childCount: records.length,
+                ),
+              ),
+            ),
+          const SliverToBoxAdapter(
+            child: SizedBox(height: 80),
+          ),
+        ],
+      ),
     );
   }
 
   // TAB 1: Patients Directory View (Clinician's Patient Folder View)
   Widget _buildPatientsTab(DentalRecordsProvider provider, List<PatientGroup> groups) {
-    return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
-      slivers: [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildSearchBar(provider),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
+    return RefreshIndicator(
+      color: AppTheme.primaryTeal,
+      backgroundColor: Colors.white,
+      onRefresh: () async {
+        HapticFeedback.lightImpact();
+        await provider.loadRecords();
+      },
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSearchBar(provider),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
                     Container(
                       width: 4,
                       height: 14,
@@ -412,6 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: SizedBox(height: 80),
         ),
       ],
+      ),
     );
   }
 
@@ -822,42 +859,348 @@ class _HomeScreenState extends State<HomeScreen> {
     final dateFormat = DateFormat('MMM dd, yyyy');
     final hasBalance = record.balanceDue > 0;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.slate200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+    return Dismissible(
+      key: ValueKey('record_${record.id}'),
+      direction: DismissDirection.horizontal,
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: AppTheme.primaryTeal,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: const [
+            Icon(Icons.picture_as_pdf_rounded, color: Colors.white, size: 24),
+            SizedBox(width: 8),
+            Text(
+              'Open PDF',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
+        ),
       ),
-      child: InkWell(
-        onTap: () {
+      secondaryBackground: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: AppTheme.accentCoral,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        alignment: Alignment.centerRight,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: const [
+            Text(
+              'Delete Visit',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            SizedBox(width: 8),
+            Icon(Icons.delete_outline_rounded, color: Colors.white, size: 24),
+          ],
+        ),
+      ),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          HapticFeedback.mediumImpact();
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => PatientDetailScreen(record: record),
+              builder: (_) => PdfPreviewScreen(record: record),
             ),
           );
-        },
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+          return false;
+        } else {
+          HapticFeedback.heavyImpact();
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Delete Clinical Visit?'),
+              content: Text('Delete record for "${record.patientName}"? This action cannot be undone.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentCoral),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          );
+          if (confirm == true && mounted) {
+            await context.read<DentalRecordsProvider>().deleteRecord(record.id);
+            return true;
+          }
+          return false;
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppTheme.slate200),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PatientDetailScreen(record: record),
+              ),
+            );
+          },
+          onLongPress: () {
+            HapticFeedback.mediumImpact();
+            _showRecordQuickActions(record);
+          },
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Patient Header & Badges
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppTheme.primaryTeal, AppTheme.accentCyan],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primaryTeal.withValues(alpha: 0.25),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        record.patientName.isNotEmpty ? record.patientName[0].toUpperCase() : 'P',
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: Colors.white),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            record.patientName,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.slate900),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${record.age != null ? "${record.age} yrs" : "Age N/A"} • ${record.gender ?? "N/A"} • ${record.phone ?? "No phone"}',
+                            style: const TextStyle(fontSize: 12, color: AppTheme.slate400, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.slate100,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            dateFormat.format(record.recordDate),
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.slate600),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: hasBalance
+                                ? AppTheme.accentAmber.withValues(alpha: 0.12)
+                                : AppTheme.accentEmerald.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            hasBalance
+                                ? '${DentalConstants.currencySymbol}${record.balanceDue.toStringAsFixed(0)} due'
+                                : 'Paid',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: hasBalance ? const Color(0xFFD97706) : AppTheme.accentEmerald,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+                const Divider(color: AppTheme.slate100, height: 1),
+                const SizedBox(height: 10),
+
+                // Chief Complaint & Diagnosis
+                if (record.chiefComplaint.isNotEmpty) ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.chat_bubble_outline_rounded, size: 14, color: AppTheme.primaryTeal),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          record.chiefComplaint,
+                          style: const TextStyle(fontSize: 12.5, color: AppTheme.slate700, fontWeight: FontWeight.w500),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                ],
+
+                // Procedures Badges
+                if (record.toothProcedures.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: record.toothProcedures.take(3).map((p) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryTeal.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: AppTheme.primaryTeal.withValues(alpha: 0.2)),
+                        ),
+                        child: Text(
+                          '#${p.toothNumber} ${p.procedureName}',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primaryTeal),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  if (record.toothProcedures.length > 3)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4.0),
+                      child: Text(
+                        '+${record.toothProcedures.length - 3} more procedures',
+                        style: const TextStyle(fontSize: 11, color: AppTheme.slate400, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+
+                // Footer with Financials, Prescriptions & Quick Tap
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        if (record.prescriptions.isNotEmpty) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppTheme.slate100,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.medication_outlined, size: 13, color: AppTheme.slate600),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${record.prescriptions.length} Rx',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.slate600),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Text(
+                          'Total: ${DentalConstants.currencySymbol}${record.estimatedCost.toStringAsFixed(0)}',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.slate900),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Export PDF Report',
+                          icon: const Icon(Icons.picture_as_pdf_outlined, size: 20, color: AppTheme.accentCoral),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PdfPreviewScreen(record: record),
+                              ),
+                            );
+                          },
+                        ),
+                        const Icon(Icons.chevron_right_rounded, size: 20, color: AppTheme.slate400),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showRecordQuickActions(PatientRecord record) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final dateFormat = DateFormat('MMMM dd, yyyy');
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Patient Header & Badges
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppTheme.slate200,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Header
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 42,
-                    height: 42,
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                         colors: [AppTheme.primaryTeal, AppTheme.accentCyan],
@@ -865,13 +1208,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.primaryTeal.withValues(alpha: 0.25),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
                     ),
                     alignment: Alignment.center,
                     child: Text(
@@ -886,134 +1222,151 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         Text(
                           record.patientName,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.slate900),
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.slate900),
                         ),
-                        const SizedBox(height: 2),
                         Text(
-                          '${record.age != null ? "${record.age} yrs" : "Age N/A"} • ${record.gender ?? "N/A"} • ${record.phone ?? "No phone"}',
-                          style: const TextStyle(fontSize: 12, color: AppTheme.slate400, fontWeight: FontWeight.w500),
+                          '${dateFormat.format(record.recordDate)} • ${record.clinicName}',
+                          style: const TextStyle(fontSize: 12, color: AppTheme.slate400),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppTheme.slate100,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          dateFormat.format(record.recordDate),
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.slate600),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: hasBalance
-                              ? AppTheme.accentAmber.withValues(alpha: 0.12)
-                              : AppTheme.accentEmerald.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          hasBalance
-                              ? '${DentalConstants.currencySymbol}${record.balanceDue.toStringAsFixed(0)} due'
-                              : 'Paid',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: hasBalance ? const Color(0xFFD97706) : AppTheme.accentEmerald,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                 ],
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 10),
-                child: Divider(color: AppTheme.slate100, height: 1),
-              ),
-
-              // Chief Complaint
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.personal_injury_outlined, size: 16, color: AppTheme.primaryTeal),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      record.chiefComplaint,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.slate800),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+              const SizedBox(height: 16),
+              const Divider(color: AppTheme.slate100, height: 1),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryTeal.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.medical_information_outlined, color: AppTheme.primaryTeal, size: 20),
+                ),
+                title: const Text('Open Clinical Chart', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('View diagnoses, tooth odontogram & Rx', style: TextStyle(fontSize: 11.5, color: AppTheme.slate400)),
+                trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.slate400),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PatientDetailScreen(record: record),
                     ),
-                  ),
-                ],
+                  );
+                },
               ),
-              const SizedBox(height: 10),
-
-              // Procedures and Doctor Row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: record.toothProcedures.map((tp) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primaryTeal.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: AppTheme.primaryTeal.withValues(alpha: 0.2)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '#${tp.toothNumber}',
-                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.primaryTeal),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                tp.procedureName.split(" ").first,
-                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.primaryDark),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.picture_as_pdf_rounded, color: Colors.redAccent, size: 20),
+                ),
+                title: const Text('Preview & Share PDF Report', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Official dental report ready for export', style: TextStyle(fontSize: 11.5, color: AppTheme.slate400)),
+                trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.slate400),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PdfPreviewScreen(record: record),
                     ),
+                  );
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentCyan.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Export PDF Report',
-                        icon: const Icon(Icons.picture_as_pdf_outlined, size: 20, color: AppTheme.accentCoral),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => PdfPreviewScreen(record: record),
-                            ),
-                          );
-                        },
-                      ),
-                      const Icon(Icons.chevron_right_rounded, size: 20, color: AppTheme.slate400),
-                    ],
+                  child: const Icon(Icons.document_scanner_rounded, color: AppTheme.accentCyan, size: 20),
+                ),
+                title: const Text('Rescan & Overwrite Visit', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Capture or upload new image to update this visit', style: TextStyle(fontSize: 11.5, color: AppTheme.slate400)),
+                trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.slate400),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  DocumentScannerHelper.openScannerModal(
+                    context,
+                    existingRecord: record,
+                  );
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                ],
+                  child: const Icon(Icons.edit_note_rounded, color: Colors.amber, size: 20),
+                ),
+                title: const Text('Edit Extracted Details', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Edit patient demographics, procedures, or bill', style: TextStyle(fontSize: 11.5, color: AppTheme.slate400)),
+                trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.slate400),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ReviewEditScreen(initialRecord: record),
+                    ),
+                  );
+                },
+              ),
+              const Divider(color: AppTheme.slate100, height: 1),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentCoral.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.delete_outline_rounded, color: AppTheme.accentCoral, size: 20),
+                ),
+                title: const Text('Delete Record', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppTheme.accentCoral)),
+                subtitle: const Text('Remove record permanently from Hive', style: TextStyle(fontSize: 11.5, color: AppTheme.slate400)),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (dCtx) => AlertDialog(
+                      title: const Text('Delete Record?'),
+                      content: Text('Are you sure you want to delete the clinical record for "${record.patientName}"?'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentCoral),
+                          onPressed: () => Navigator.pop(dCtx, true),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true && mounted) {
+                    await context.read<DentalRecordsProvider>().deleteRecord(record.id);
+                  }
+                },
               ),
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

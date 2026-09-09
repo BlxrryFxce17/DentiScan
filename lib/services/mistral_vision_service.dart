@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-class GeminiVisionService {
+class MistralVisionService {
+  static const String endpoint = 'https://api.mistral.ai/v1/chat/completions';
+  static const String defaultModel = 'pixtral-12b-2409';
 
-  /// Sends the document image bytes to Google Gemini Vision API to decipher handwriting and structure medical data
+  /// Sends the document image bytes to Mistral Pixtral Vision API to transcribe and structure dental records
   static Future<String> extractClinicalText({
     required Uint8List imageBytes,
     required String apiKey,
@@ -108,123 +110,82 @@ Notes / Instructions: [Receipt/Invoice numbers, registration, signatures]
 Important: For fields with no information, write "None" or omit the line. Do NOT output bracketed placeholders like "[Not recorded]".
 ''';
 
+    final model = customModel ?? defaultModel;
+    final url = Uri.parse(endpoint);
+
     final requestBody = jsonEncode({
-      'contents': [
+      'model': model,
+      'messages': [
         {
-          'parts': [
-            {'text': prompt},
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': prompt},
             {
-              'inline_data': {
-                'mime_type': 'image/jpeg',
-                'data': base64Image,
-              }
-            }
-          ]
-        }
+              'type': 'image_url',
+              'image_url': {
+                'url': 'data:image/jpeg;base64,$base64Image',
+              },
+            },
+          ],
+        },
       ],
-      'generationConfig': {
-        'temperature': 0.1,
-        'maxOutputTokens': 2048,
-      }
+      'temperature': 0.1,
+      'max_tokens': 2048,
     });
 
-    final List<String> candidateModels = [];
-    if (customModel != null && customModel.trim().isNotEmpty) {
-      candidateModels.add(customModel.trim());
-    }
-    const fallbackList = [
-      'gemini-3.7-flash',
-      'gemini-3.5-flash-lite',
-      'gemini-flash-latest',
-      'gemini-2.5-flash',
-      'gemini-3.6-flash',
-    ];
-    for (final m in fallbackList) {
-      if (!candidateModels.contains(m)) {
-        candidateModels.add(m);
-      }
-    }
+    final response = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $apiKey',
+      },
+      body: requestBody,
+    ).timeout(
+      const Duration(seconds: 40),
+      onTimeout: () => throw Exception('Mistral AI connection timed out after 40 seconds.'),
+    );
 
-    String? lastError;
-
-    for (final model in candidateModels) {
-      try {
-        final url = Uri.parse(
-          'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
-        );
-
-        final response = await http
-            .post(
-              url,
-              headers: {'Content-Type': 'application/json'},
-              body: requestBody,
-            )
-            .timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final json = jsonDecode(response.body);
-          final candidates = json['candidates'] as List?;
-          if (candidates != null && candidates.isNotEmpty) {
-            final content = candidates[0]['content'];
-            final parts = content['parts'] as List?;
-            if (parts != null && parts.isNotEmpty) {
-              final text = parts[0]['text'] as String?;
-              if (text != null && text.trim().isNotEmpty) {
-                return text;
-              }
-            }
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body);
+      final choices = json['choices'] as List?;
+      if (choices != null && choices.isNotEmpty) {
+        final message = choices.first['message'];
+        if (message != null && message['content'] != null) {
+          final content = message['content'] as String;
+          if (content.trim().isNotEmpty) {
+            return content;
           }
-          throw Exception('Empty response from Gemini Vision API ($model).');
-        } else if (response.statusCode == 503) {
-          lastError = 'HTTP 503: Model $model is experiencing high demand.';
-          debugPrint('Gemini model $model returned 503 high demand. Rapid failover to next model...');
-          continue; // Move to next fallback model immediately
-        } else if (response.statusCode == 429) {
-          lastError = 'HTTP 429: Model $model daily quota or rate limit exceeded.';
-          debugPrint('Gemini model $model returned 429 limit. Rapid failover to next model...');
-          continue; // Try next model immediately
-        } else {
-          lastError = 'HTTP ${response.statusCode}: ${response.body}';
-          debugPrint('Gemini model $model returned status ${response.statusCode}. Trying next candidate...');
-          continue;
         }
-      } catch (e) {
-        lastError = e.toString();
-        debugPrint('Gemini Vision error on $model: $e. Advancing to next candidate...');
-        continue;
       }
+      throw Exception('Mistral returned an empty response.');
+    } else {
+      throw Exception('Mistral HTTP ${response.statusCode}: ${response.body}');
     }
-
-    throw Exception(lastError ?? 'Gemini Vision extraction failed across all models.');
   }
 
-  /// Quick validation to verify if the API key is active
+  /// Verifies connectivity with Mistral API using the user's API key
   static Future<bool> testApiKey(String apiKey) async {
-    for (final model in ['gemini-3.7-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash']) {
-      try {
-        final url = Uri.parse(
-          'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
-        );
-        final response = await http
-            .post(
-              url,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'contents': [
-                  {
-                    'parts': [
-                      {'text': 'ping'}
-                    ]
-                  }
-                ]
-              }),
-            )
-            .timeout(const Duration(seconds: 5));
-        if (response.statusCode == 200) {
-          return true;
-        }
-      } catch (_) {}
+    try {
+      final url = Uri.parse(endpoint);
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: jsonEncode({
+          'model': defaultModel,
+          'messages': [
+            {'role': 'user', 'content': 'Ping. Reply OK.'}
+          ],
+          'max_tokens': 5,
+        }),
+      ).timeout(const Duration(seconds: 12));
+
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Mistral key test error: $e');
+      return false;
     }
-    return false;
   }
 }
